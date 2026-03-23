@@ -1,0 +1,10 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: backend-v5
+  namespace: apps
+spec:
+  values:
+    image:
+      repository: ghcr.io/samuel-patrocinio/backend
+      tag: "0.1.0"
