@@ -1,0 +1,92 @@
+name: Environment Deploy
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      tag:
+        required: true
+        type: string
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Resolve backend version
+        id: resolve
+        run: |
+          NEXT=$(cat manifests/${{ inputs.environment }}/backend-next.txt | tr -d '[:space:]')
+          echo "version=v${NEXT}" >> "$GITHUB_OUTPUT"
+          echo "Updating backend-v${NEXT}"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/frontend:${{ inputs.tag }}-${{ inputs.environment }}
+          build-args: |
+            APP_ENV=${{ inputs.environment }}
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/backend:${{ inputs.tag }}-${{ inputs.environment }}
+          build-args: |
+            APP_ENV=${{ inputs.environment }}
+            API_VERSION=v2
+
+      - name: Build and push scheduler
+        uses: docker/build-push-action@v6
+        with:
+          context: ./scheduler
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/scheduler:${{ inputs.tag }}-${{ inputs.environment }}
+          build-args: |
+            APP_ENV=${{ inputs.environment }}
+
+      - name: Update manifests
+        run: |
+          TAG="${{ inputs.tag }}-${{ inputs.environment }}"
+          ENV="${{ inputs.environment }}"
+          V="${{ steps.resolve.outputs.version }}"
+          sed -i "s|tag: \".*\"|tag: \"${TAG}\"|" manifests/${ENV}/frontend.yaml
+          sed -i "s|tag: \".*\"|tag: \"${TAG}\"|" manifests/${ENV}/backend-${V}.yaml
+          sed -i "s|tag: \".*\"|tag: \"${TAG}\"|" manifests/${ENV}/scheduler.yaml
+
+      - name: Advance cycle
+        run: |
+          ENV="${{ inputs.environment }}"
+          CURRENT=$(cat manifests/${ENV}/backend-next.txt | tr -d '[:space:]')
+          NEXT=$(( (CURRENT % 5) + 1 ))
+          echo "$NEXT" > manifests/${ENV}/backend-next.txt
+
+      - name: Show changes
+        run: git diff
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add manifests/${{ inputs.environment }}/
+          git commit -m "deploy(${{ inputs.environment }}): update frontend, backend-${{ steps.resolve.outputs.version }}, scheduler to ${{ inputs.tag }}"
+          git push

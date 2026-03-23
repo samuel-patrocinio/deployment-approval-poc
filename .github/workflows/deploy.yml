@@ -10,172 +10,34 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
-  deploy-dev:
-    runs-on: ubuntu-latest
-    environment: dev
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
+  dev:
+    uses: ./.github/workflows/env-deploy.yml
+    with:
+      environment: dev
+      tag: ${{ inputs.tag }}
 
-      - name: Resolve backend version
-        id: resolve
-        run: |
-          NEXT=$(cat manifests/dev/backend-next.txt | tr -d '[:space:]')
-          echo "version=v${NEXT}" >> "$GITHUB_OUTPUT"
-          echo "Updating backend-v${NEXT}"
+  qa:
+    needs: dev
+    uses: ./.github/workflows/env-deploy.yml
+    with:
+      environment: qa
+      tag: ${{ inputs.tag }}
 
-      - name: Update image tags
-        run: |
-          TAG="${{ inputs.tag }}"
-          V="${{ steps.resolve.outputs.version }}"
-          sed -i "s|tag: \".*\"|tag: \"${TAG}\"|" manifests/dev/frontend.yaml
-          sed -i "s|tag: \".*\"|tag: \"${TAG}\"|" manifests/dev/backend-${V}.yaml
-          sed -i "s|tag: \".*\"|tag: \"${TAG}\"|" manifests/dev/scheduler.yaml
+  uat:
+    needs: qa
+    uses: ./.github/workflows/env-deploy.yml
+    with:
+      environment: uat
+      tag: ${{ inputs.tag }}
 
-      - name: Advance cycle
-        run: |
-          CURRENT=$(cat manifests/dev/backend-next.txt | tr -d '[:space:]')
-          NEXT=$(( (CURRENT % 5) + 1 ))
-          echo "$NEXT" > manifests/dev/backend-next.txt
-
-      - name: Show changes
-        run: git diff
-
-      - name: Commit and push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add manifests/dev/
-          git commit -m "deploy(dev): update frontend, backend-${{ steps.resolve.outputs.version }}, scheduler to ${{ inputs.tag }}"
-          git push
-
-  deploy-qa:
-    needs: deploy-dev
-    runs-on: ubuntu-latest
-    environment: qa
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - name: Resolve backend version
-        id: resolve
-        run: |
-          NEXT=$(cat manifests/qa/backend-next.txt | tr -d '[:space:]')
-          echo "version=v${NEXT}" >> "$GITHUB_OUTPUT"
-          echo "Updating backend-v${NEXT}"
-
-      - name: Update image tags
-        run: |
-          TAG="${{ inputs.tag }}"
-          V="${{ steps.resolve.outputs.version }}"
-          sed -i "s|tag: \".*\"|tag: \"${TAG}\"|" manifests/qa/frontend.yaml
-          sed -i "s|tag: \".*\"|tag: \"${TAG}\"|" manifests/qa/backend-${V}.yaml
-          sed -i "s|tag: \".*\"|tag: \"${TAG}\"|" manifests/qa/scheduler.yaml
-
-      - name: Advance cycle
-        run: |
-          CURRENT=$(cat manifests/qa/backend-next.txt | tr -d '[:space:]')
-          NEXT=$(( (CURRENT % 5) + 1 ))
-          echo "$NEXT" > manifests/qa/backend-next.txt
-
-      - name: Show changes
-        run: git diff
-
-      - name: Commit and push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add manifests/qa/
-          git commit -m "deploy(qa): update frontend, backend-${{ steps.resolve.outputs.version }}, scheduler to ${{ inputs.tag }}"
-          git push
-
-  deploy-uat:
-    needs: deploy-qa
-    runs-on: ubuntu-latest
-    environment: uat
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - name: Resolve backend version
-        id: resolve
-        run: |
-          NEXT=$(cat manifests/uat/backend-next.txt | tr -d '[:space:]')
-          echo "version=v${NEXT}" >> "$GITHUB_OUTPUT"
-          echo "Updating backend-v${NEXT}"
-
-      - name: Update image tags
-        run: |
-          TAG="${{ inputs.tag }}"
-          V="${{ steps.resolve.outputs.version }}"
-          sed -i "s|tag: \".*\"|tag: \"${TAG}\"|" manifests/uat/frontend.yaml
-          sed -i "s|tag: \".*\"|tag: \"${TAG}\"|" manifests/uat/backend-${V}.yaml
-          sed -i "s|tag: \".*\"|tag: \"${TAG}\"|" manifests/uat/scheduler.yaml
-
-      - name: Advance cycle
-        run: |
-          CURRENT=$(cat manifests/uat/backend-next.txt | tr -d '[:space:]')
-          NEXT=$(( (CURRENT % 5) + 1 ))
-          echo "$NEXT" > manifests/uat/backend-next.txt
-
-      - name: Show changes
-        run: git diff
-
-      - name: Commit and push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add manifests/uat/
-          git commit -m "deploy(uat): update frontend, backend-${{ steps.resolve.outputs.version }}, scheduler to ${{ inputs.tag }}"
-          git push
-
-  deploy-prod:
-    needs: deploy-uat
-    runs-on: ubuntu-latest
-    environment: prod
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - name: Resolve backend version
-        id: resolve
-        run: |
-          NEXT=$(cat manifests/prod/backend-next.txt | tr -d '[:space:]')
-          echo "version=v${NEXT}" >> "$GITHUB_OUTPUT"
-          echo "Updating backend-v${NEXT}"
-
-      - name: Update image tags
-        run: |
-          TAG="${{ inputs.tag }}"
-          V="${{ steps.resolve.outputs.version }}"
-          sed -i "s|tag: \".*\"|tag: \"${TAG}\"|" manifests/prod/frontend.yaml
-          sed -i "s|tag: \".*\"|tag: \"${TAG}\"|" manifests/prod/backend-${V}.yaml
-          sed -i "s|tag: \".*\"|tag: \"${TAG}\"|" manifests/prod/scheduler.yaml
-
-      - name: Advance cycle
-        run: |
-          CURRENT=$(cat manifests/prod/backend-next.txt | tr -d '[:space:]')
-          NEXT=$(( (CURRENT % 5) + 1 ))
-          echo "$NEXT" > manifests/prod/backend-next.txt
-
-      - name: Show changes
-        run: git diff
-
-      - name: Commit and push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add manifests/prod/
-          git commit -m "deploy(prod): update frontend, backend-${{ steps.resolve.outputs.version }}, scheduler to ${{ inputs.tag }}"
-          git push
+  prod:
+    needs: uat
+    uses: ./.github/workflows/env-deploy.yml
+    with:
+      environment: prod
+      tag: ${{ inputs.tag }}
