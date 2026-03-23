@@ -18,14 +18,22 @@ jobs:
       contents: write
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout tag (for building)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          path: source
+
+      - name: Checkout main (for manifests)
+        uses: actions/checkout@v4
         with:
           ref: main
+          path: deploy
 
       - name: Resolve backend version
         id: resolve
         run: |
-          NEXT=$(cat manifests/${{ inputs.environment }}/backend-next.txt | tr -d '[:space:]')
+          NEXT=$(cat deploy/manifests/${{ inputs.environment }}/backend-next.txt | tr -d '[:space:]')
           echo "version=v${NEXT}" >> "$GITHUB_OUTPUT"
           echo "Updating backend-v${NEXT}"
 
@@ -39,7 +47,7 @@ jobs:
       - name: Build and push frontend
         uses: docker/build-push-action@v6
         with:
-          context: ./frontend
+          context: ./source/frontend
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/frontend:${{ inputs.tag }}-${{ inputs.environment }}
           build-args: |
@@ -48,7 +56,7 @@ jobs:
       - name: Build and push backend
         uses: docker/build-push-action@v6
         with:
-          context: ./backend
+          context: ./source/backend
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/backend:${{ inputs.tag }}-${{ inputs.environment }}
           build-args: |
@@ -58,13 +66,14 @@ jobs:
       - name: Build and push scheduler
         uses: docker/build-push-action@v6
         with:
-          context: ./scheduler
+          context: ./source/scheduler
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/scheduler:${{ inputs.tag }}-${{ inputs.environment }}
           build-args: |
             APP_ENV=${{ inputs.environment }}
 
       - name: Update manifests
+        working-directory: deploy
         run: |
           TAG="${{ inputs.tag }}-${{ inputs.environment }}"
           ENV="${{ inputs.environment }}"
@@ -74,6 +83,7 @@ jobs:
           sed -i "s|tag: \".*\"|tag: \"${TAG}\"|" manifests/${ENV}/scheduler.yaml
 
       - name: Advance cycle
+        working-directory: deploy
         run: |
           ENV="${{ inputs.environment }}"
           CURRENT=$(cat manifests/${ENV}/backend-next.txt | tr -d '[:space:]')
@@ -81,9 +91,11 @@ jobs:
           echo "$NEXT" > manifests/${ENV}/backend-next.txt
 
       - name: Show changes
+        working-directory: deploy
         run: git diff
 
       - name: Commit and push
+        working-directory: deploy
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
