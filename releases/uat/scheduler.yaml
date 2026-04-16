@@ -1,0 +1,23 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: scheduler
+  namespace: flux-system
+spec:
+  releaseName: scheduler
+  interval: 5m
+  chart:
+    spec:
+      chart: ./charts/scheduler
+      sourceRef:
+        kind: GitRepository
+        name: deployment-approval-poc
+        namespace: flux-system
+      interval: 5m
+  targetNamespace: poc-uat
+  install:
+    createNamespace: true
+  values:
+    image:
+      repository: ghcr.io/samuel-patrocinio/scheduler
+      tag: latest

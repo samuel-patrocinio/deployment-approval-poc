@@ -1,0 +1,24 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: frontend
+  namespace: flux-system
+spec:
+  releaseName: frontend
+  interval: 5m
+  chart:
+    spec:
+      chart: ./charts/frontend
+      sourceRef:
+        kind: GitRepository
+        name: deployment-approval-poc
+        namespace: flux-system
+      interval: 5m
+  targetNamespace: poc-dev
+  install:
+    createNamespace: true
+  values:
+    image:
+      repository: ghcr.io/samuel-patrocinio/frontend
+      tag: latest
+    host: poc-dev.example.com

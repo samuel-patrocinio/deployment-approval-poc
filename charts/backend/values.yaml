@@ -1,0 +1,49 @@
+image:
+  repository: hello-world
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# URL path prefix for this instance (e.g., "0.1", "0.2", "dev")
+apiPath: ""
+
+# Ingress host
+host: ""
+additionalHosts: []
+
+replicas: 1
+
+resources:
+  requests:
+    memory: "256Mi"
+    cpu: "100m"
+  limits:
+    memory: "512Mi"
+    cpu: "500m"
+
+probes:
+  readiness:
+    path: /health
+    port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 10
+  liveness:
+    path: /health
+    port: 8000
+    initialDelaySeconds: 15
+    periodSeconds: 20
+
+secrets:
+  app: ""
+  pullSecret: ""
+
+ingress:
+  enabled: true
+  annotations: {}
+  swagger:
+    enabled: false
+
+serviceAccountName: ""
+
+azureWorkloadIdentity:
+  enabled: false
+  clientId: ""

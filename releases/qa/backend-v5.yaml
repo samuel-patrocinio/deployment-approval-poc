@@ -1,0 +1,28 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: backend-v5
+  namespace: flux-system
+spec:
+  releaseName: backend-v5
+  interval: 5m
+  chart:
+    spec:
+      chart: ./charts/backend
+      sourceRef:
+        kind: GitRepository
+        name: deployment-approval-poc
+        namespace: flux-system
+      interval: 5m
+  targetNamespace: poc-qa
+  install:
+    createNamespace: true
+  values:
+    image:
+      repository: ghcr.io/samuel-patrocinio/backend
+      tag: latest
+    apiPath: "0.5"
+    host: poc-qa.example.com
+    ingress:
+      swagger:
+        enabled: true

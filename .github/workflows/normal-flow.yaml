@@ -1,0 +1,21 @@
+name: Normal Flow
+run-name: Normal Flow [${{ github.ref_name }}]
+on:
+  create # Triggers the workflow when a BRANCH or a TAG are created
+defaults:
+  run:
+    shell: python
+jobs:
+  verify:
+    name: Verify prerequisites
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify ref type
+        run: |
+          import os
+          import sys
+          ref_type = os.environ["GITHUB_REF_TYPE"]
+          print(f"Ref type: {ref_type}")
+          if ref_type != "tag":
+              print("::warning::The reference that triggered this workflow was a branch, not a tag. Stopping the run.")
+              sys.exit(1)

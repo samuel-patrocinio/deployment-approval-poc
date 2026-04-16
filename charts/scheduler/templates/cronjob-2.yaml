@@ -1,0 +1,32 @@
+{{- if .Values.cronjobs.cronjob2.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "scheduler.fullname" . }}-cronjob-2
+  labels:
+    {{- include "scheduler.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.cronjobs.cronjob2.schedule | quote }}
+  concurrencyPolicy: {{ .Values.cronjobs.cronjob2.concurrencyPolicy }}
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  startingDeadlineSeconds: {{ .Values.cronjobs.cronjob2.startingDeadlineSeconds }}
+  suspend: false
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.cronjobs.cronjob2.backoffLimit }}
+      ttlSecondsAfterFinished: {{ .Values.cronjobs.cronjob2.ttlSecondsAfterFinished }}
+      template:
+        spec:
+          containers:
+            - name: cronjob-2
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              resources:
+                {{- toYaml .Values.cronjobs.cronjob2.resources | nindent 16 }}
+          {{- if .Values.secrets.pullSecret }}
+          imagePullSecrets:
+            - name: {{ .Values.secrets.pullSecret }}
+          {{- end }}
+          restartPolicy: OnFailure
+{{- end }}

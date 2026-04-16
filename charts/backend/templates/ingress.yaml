@@ -1,0 +1,77 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "backend.fullname" . }}-api
+  labels:
+    {{- include "backend.labels" . | nindent 4 }}
+  annotations:
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /api/$2
+spec:
+  rules:
+    - host: {{ .Values.host }}
+      http:
+        paths:
+          - path: /{{ .Values.apiPath }}/api(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ include "backend.fullname" . }}
+                port:
+                  number: 80
+    {{- range .Values.additionalHosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: /{{ $.Values.apiPath }}/api(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ include "backend.fullname" $ }}
+                port:
+                  number: 80
+    {{- end }}
+{{- if .Values.ingress.swagger.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "backend.fullname" . }}-swagger
+  labels:
+    {{- include "backend.labels" . | nindent 4 }}
+  annotations:
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /swagger/$2
+spec:
+  rules:
+    - host: {{ .Values.host }}
+      http:
+        paths:
+          - path: /{{ .Values.apiPath }}/swagger(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ include "backend.fullname" . }}
+                port:
+                  number: 80
+    {{- range .Values.additionalHosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: /{{ $.Values.apiPath }}/swagger(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ include "backend.fullname" $ }}
+                port:
+                  number: 80
+    {{- end }}
+{{- end }}
+{{- end }}

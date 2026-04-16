@@ -1,0 +1,39 @@
+image:
+  repository: hello-world
+  tag: latest
+  pullPolicy: IfNotPresent
+
+host: ""
+additionalHosts: []
+
+replicas: 1
+
+resources:
+  requests:
+    memory: "50Mi"
+    cpu: "50m"
+  limits:
+    memory: "156Mi"
+    cpu: "200m"
+
+probes:
+  readiness:
+    path: /
+    port: 80
+    initialDelaySeconds: 10
+    periodSeconds: 10
+  liveness:
+    path: /
+    port: 80
+    initialDelaySeconds: 15
+    periodSeconds: 20
+
+secrets:
+  app: ""
+  pullSecret: ""
+
+ingress:
+  enabled: true
+  annotations: {}
+
+serviceAccountName: ""
