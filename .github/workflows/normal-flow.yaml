@@ -10,6 +10,7 @@ jobs:
     name: Verify prerequisites
     runs-on: ubuntu-latest
     steps:
+      # Stop the run if ref is not a tag
       - name: Verify ref type
         run: |
           import os
@@ -19,3 +20,17 @@ jobs:
           if ref_type != "tag":
               print("::warning::The reference that triggered this workflow was a branch, not a tag. Stopping the run.")
               sys.exit(1)
+          print(f"Ref type: '{ref_type}' is valid.")
+      # Stop the run if tag does not match vX.Y.Z
+      - name: Verify tag format
+        run: |
+          import os
+          import re
+          import sys
+          ref_name = os.environ["GITHUB_REF_NAME"]
+          if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", ref_name):
+              print(f"::warning::Tag '{ref_name}' does not match vX.Y.Z. Stopping the run.")
+              sys.exit(1)
+          print(f"Tag '{ref_name}' is valid.")
+
+        
