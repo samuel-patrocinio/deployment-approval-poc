@@ -1,36 +1,168 @@
 name: Normal Flow
 run-name: Normal Flow [${{ github.ref_name }}]
 on:
-  create # Triggers the workflow when a BRANCH or a TAG are created
-defaults:
-  run:
-    shell: python
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+' # Only fires for tags matching vX.Y.Z
+env:
+  REGISTRY: ghcr.io
+# Serialize workflow runs so the deploy-dev commit+push can't race against
+# another run's deploy-dev for the same branch.
+concurrency:
+  group: normal-flow
+  cancel-in-progress: false
 jobs:
-  verify:
-    name: Verify prerequisites
+  build-frontend:
+    name: Build frontend (${{ matrix.env }})
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - env: dev
+            host: poc-dev.example.com
+          - env: qa
+            host: poc-qa.example.com
+          - env: uat
+            host: poc-uat.example.com
+          - env: prod
+            host: poc-prod.example.com
     steps:
-      # Stop the run if ref is not a tag
-      - name: Verify ref type
-        run: |
-          import os
-          import sys
-          ref_type = os.environ["GITHUB_REF_TYPE"]
-          print(f"Ref type: {ref_type}")
-          if ref_type != "tag":
-              print("::warning::The reference that triggered this workflow was a branch, not a tag. Stopping the run.")
-              sys.exit(1)
-          print(f"Ref type: '{ref_type}' is valid.")
-      # Stop the run if tag does not match vX.Y.Z
-      - name: Verify tag format
-        run: |
-          import os
-          import re
-          import sys
-          ref_name = os.environ["GITHUB_REF_NAME"]
-          if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", ref_name):
-              print(f"::warning::Tag '{ref_name}' does not match vX.Y.Z. Stopping the run.")
-              sys.exit(1)
-          print(f"Tag '{ref_name}' is valid.")
+      - name: Checkout to tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{github.ref_name}}
+      - name: Log in to image registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./src/frontend
+          file: ./dockerfiles/frontend.Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ github.repository }}/frontend-${{ matrix.env }}:${{ github.ref_name }}
+          build-args: |
+            API_URL=https://${{ matrix.host }}/${{ github.ref_name }}/api
 
-        
+  build-backend:
+    name: Build backend
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout to tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{github.ref_name}}
+      - name: Log in to image registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./src/backend
+          file: ./dockerfiles/backend.Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ github.repository }}/backend:${{ github.ref_name }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+
+  build-scheduler:
+    name: Build scheduler
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout to tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{github.ref_name}}
+      - name: Log in to image registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # K8s Service names can't contain dots, so the backend chart uses the
+      # tag with dots replaced by dashes as the resource name suffix.
+      - name: Compute slugified tag
+        id: slug
+        shell: bash
+        run: echo "slug=${GITHUB_REF_NAME//./-}" >> "$GITHUB_OUTPUT"
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./src/scheduler
+          file: ./dockerfiles/scheduler.Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ github.repository }}/scheduler:${{ github.ref_name }}
+          build-args: |
+            API_URL=http://backend-${{ steps.slug.outputs.slug }}/api
+
+  draft-release:
+    name: Create draft release
+    needs: [build-frontend, build-backend, build-scheduler]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Skip creation if a release for this tag already exists, so re-runs of
+        # the workflow don't fail on `gh release create` returning non-zero.
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists, skipping."
+            exit 0
+          fi
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --draft \
+            --generate-notes
+
+  deploy-dev:
+    name: Deploy to Dev
+    needs: draft-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+      - name: Update dev manifests and push
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        # Rolling N-slot deploy: pick the next backend slot from backend-next.txt,
+        # update its image tag and apiPath, bump frontend/scheduler tags, then
+        # advance the slot counter (wraps 5 -> 1) and push the manifest changes
+        # to main so Flux reconciles the cluster.
+        run: |
+          set -euo pipefail
+          slot=$(cat releases/dev/backend-next.txt)
+          yq -i '.spec.values.image.tag = strenv(TAG)' releases/dev/frontend.yaml
+          yq -i '.spec.values.image.tag = strenv(TAG) | .spec.values.apiPath = strenv(TAG)' "releases/dev/backend-v${slot}.yaml"
+          yq -i '.spec.values.image.tag = strenv(TAG)' releases/dev/scheduler.yaml
+          next=$(( slot % 5 + 1 ))
+          echo "$next" > releases/dev/backend-next.txt
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add releases/dev/
+          git commit -m "deploy(dev): update frontend, backend-v${slot}, scheduler to ${TAG}"
+          git push origin main

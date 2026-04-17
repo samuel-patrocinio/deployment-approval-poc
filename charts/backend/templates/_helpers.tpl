@@ -1,5 +1,5 @@
 {{- define "backend.fullname" -}}
-{{ .Release.Name }}
+backend-{{ .Values.apiPath | replace "." "-" }}
 {{- end -}}
 
 {{- define "backend.labels" -}}
