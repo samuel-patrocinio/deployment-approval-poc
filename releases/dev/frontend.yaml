@@ -19,6 +19,6 @@ spec:
     createNamespace: true
   values:
     image:
-      repository: ghcr.io/samuel-patrocinio/frontend-dev
+      repository: ghcr.io/samuel-patrocinio/deployment-approval-poc/frontend-dev
       tag: latest
     host: poc-dev.example.com

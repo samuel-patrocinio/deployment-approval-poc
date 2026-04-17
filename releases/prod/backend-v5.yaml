@@ -19,7 +19,7 @@ spec:
     createNamespace: true
   values:
     image:
-      repository: ghcr.io/samuel-patrocinio/backend
+      repository: ghcr.io/samuel-patrocinio/deployment-approval-poc/backend
       tag: latest
     apiPath: "0.5"
     host: poc.example.com

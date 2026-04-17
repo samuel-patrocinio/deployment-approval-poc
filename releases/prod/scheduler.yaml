@@ -19,5 +19,5 @@ spec:
     createNamespace: true
   values:
     image:
-      repository: ghcr.io/samuel-patrocinio/scheduler
+      repository: ghcr.io/samuel-patrocinio/deployment-approval-poc/scheduler
       tag: latest
