@@ -1,0 +1,67 @@
+name: (reusable) Env deploy
+
+on:
+  workflow_call:
+    inputs:
+      env:
+        required: true
+        type: string
+    secrets:
+      DB_CONN:
+        required: false
+
+jobs:
+  deploy:
+    name: Deploy to ${{ inputs.env }}
+    environment: ${{ inputs.env }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+
+      # TODO(db): uncomment alongside the _db-plan TODO block.
+      #
+      # - uses: actions/setup-dotnet@v5
+      #   with:
+      #     dotnet-version: '8.0.x'
+      # - name: Install sqlpackage
+      #   run: dotnet tool install --global Microsoft.SqlPackage
+      # - name: Build DACPAC
+      #   working-directory: src/db
+      #   run: dotnet build -c Release
+      # - name: Apply DB changes (sqlpackage Publish)
+      #   env:
+      #     CONN: ${{ secrets.DB_CONN }}
+      #   run: |
+      #     sqlpackage /Action:Publish \
+      #       /SourceFile:src/db/bin/Release/*.dacpac \
+      #       /TargetConnectionString:"$CONN" \
+      #       /p:IgnorePermissions=True /p:IgnoreRoleMembership=True
+
+      - name: Update ${{ inputs.env }} manifests and push
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+          ENV_DIR: releases/${{ inputs.env }}
+        # Rolling N-slot deploy: pick the next backend slot from
+        # backend-next.txt, update its image tag and apiPath, bump
+        # frontend/scheduler tags, then advance the slot counter
+        # (wraps 5 -> 1) and push the manifest changes to main so
+        # Flux reconciles the cluster.
+        run: |
+          set -euo pipefail
+          slot=$(cat "$ENV_DIR/backend-next.txt")
+          yq -i '.spec.values.image.tag = strenv(TAG)' "$ENV_DIR/frontend.yaml"
+          yq -i '.spec.values.image.tag = strenv(TAG) | .spec.values.apiPath = strenv(TAG)' "$ENV_DIR/backend-v${slot}.yaml"
+          yq -i '.spec.values.image.tag = strenv(TAG)' "$ENV_DIR/scheduler.yaml"
+          next=$(( slot % 5 + 1 ))
+          echo "$next" > "$ENV_DIR/backend-next.txt"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$ENV_DIR/"
+          git commit -m "deploy(${{ inputs.env }}): update frontend, backend-v${slot}, scheduler to ${TAG}"
+          git push origin main

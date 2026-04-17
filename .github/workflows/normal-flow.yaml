@@ -114,108 +114,6 @@ jobs:
           build-args: |
             API_URL=http://backend-${{ steps.slug.outputs.slug }}/api
 
-  db-plan-dev:
-    name: Generate DB plan for dev
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout to tag
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ github.ref_name }}
-
-      - uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: '8.0.x'
-
-      - name: Install sqlpackage
-        run: dotnet tool install --global Microsoft.SqlPackage
-
-      # TODO(db): uncomment once src/db/<project>.sqlproj exists AND the
-      # DEV_DB_CONNECTION_STRING repo secret is set. Then DELETE the
-      # "Generate placeholder plan" step below — the render/upload steps
-      # already consume deployment-report.xml and deployment-script.sql at
-      # the same paths.
-      #
-      # - name: Build DACPAC
-      #   working-directory: src/db
-      #   run: dotnet build -c Release
-      #
-      # - name: Generate DeployReport (XML)
-      #   env:
-      #     CONN: ${{ secrets.DEV_DB_CONNECTION_STRING }}
-      #   run: |
-      #     sqlpackage /Action:DeployReport \
-      #       /SourceFile:src/db/bin/Release/*.dacpac \
-      #       /TargetConnectionString:"$CONN" \
-      #       /OutputPath:deployment-report.xml \
-      #       /p:IgnorePermissions=True /p:IgnoreRoleMembership=True
-      #
-      # - name: Generate Deploy Script (SQL)
-      #   env:
-      #     CONN: ${{ secrets.DEV_DB_CONNECTION_STRING }}
-      #   run: |
-      #     sqlpackage /Action:Script \
-      #       /SourceFile:src/db/bin/Release/*.dacpac \
-      #       /TargetConnectionString:"$CONN" \
-      #       /OutputPath:deployment-script.sql \
-      #       /p:IgnorePermissions=True /p:IgnoreRoleMembership=True
-
-      # Placeholder: writes sample XML + SQL so the summary and artifact
-      # display match the real thing. Delete this step once the TODO(db)
-      # sqlpackage steps above are enabled.
-      - name: Generate placeholder plan
-        run: |
-          cat > deployment-report.xml <<'XML'
-          <?xml version="1.0" encoding="utf-8"?>
-          <DeploymentReport xmlns="http://schemas.microsoft.com/sqlserver/dac/DeployReport/2012/02">
-            <Operations>
-              <Operation Name="Create">
-                <Item Value="[dbo].[Users]" Type="SqlTable"/>
-              </Operation>
-            </Operations>
-          </DeploymentReport>
-          XML
-          cat > deployment-script.sql <<'SQL'
-          /* PLACEHOLDER plan — sqlpackage is not yet wired up. */
-
-          CREATE TABLE [dbo].[Users] (
-            [Id]        INT            IDENTITY(1,1) PRIMARY KEY,
-            [Email]     NVARCHAR(256)  NOT NULL,
-            [CreatedAt] DATETIME2      NOT NULL DEFAULT SYSUTCDATETIME()
-          );
-          GO
-          SQL
-
-      - name: Render plan in Job Summary
-        run: |
-          {
-            echo '## Database deployment plan — dev'
-            echo
-            echo '<details><summary>XML DeployReport</summary>'
-            echo
-            echo '```xml'
-            cat deployment-report.xml
-            echo '```'
-            echo
-            echo '</details>'
-            echo
-            echo '<details><summary>SQL Script</summary>'
-            echo
-            echo '```sql'
-            cat deployment-script.sql
-            echo '```'
-            echo
-            echo '</details>'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload plan artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: db-plan-dev
-          path: |
-            deployment-report.xml
-            deployment-script.sql
-
   draft-release:
     name: Create draft release
     needs: [build-frontend, build-backend, build-scheduler]
@@ -239,57 +137,66 @@ jobs:
             --title "$GITHUB_REF_NAME" \
             --draft \
             --generate-notes
+            
+  db-plan-dev:
+    uses: ./.github/workflows/_db-plan.yaml
+    with:
+      env: dev
+    secrets:
+      DB_CONN: ${{ secrets.DEV_DB_CONNECTION_STRING }}
 
   deploy-dev:
-    name: Deploy to Dev
     needs: [draft-release, db-plan-dev]
-    environment: dev
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout main
-        uses: actions/checkout@v6
-        with:
-          ref: main
+    uses: ./.github/workflows/_env-deploy.yaml
+    with:
+      env: dev
+    secrets:
+      DB_CONN: ${{ secrets.DEV_DB_CONNECTION_STRING }}
 
-      # TODO(db): uncomment alongside the db-plan-dev TODO block.
-      #
-      # - uses: actions/setup-dotnet@v5
-      #   with:
-      #     dotnet-version: '8.0.x'
-      # - name: Install sqlpackage
-      #   run: dotnet tool install --global Microsoft.SqlPackage
-      # - name: Build DACPAC
-      #   working-directory: src/db
-      #   run: dotnet build -c Release
-      # - name: Apply DB changes (sqlpackage Publish)
-      #   env:
-      #     CONN: ${{ secrets.DEV_DB_CONNECTION_STRING }}
-      #   run: |
-      #     sqlpackage /Action:Publish \
-      #       /SourceFile:src/db/bin/Release/*.dacpac \
-      #       /TargetConnectionString:"$CONN" \
-      #       /p:IgnorePermissions=True /p:IgnoreRoleMembership=True
+  db-plan-qa:
+    needs: deploy-dev
+    uses: ./.github/workflows/_db-plan.yaml
+    with:
+      env: qa
+    secrets:
+      DB_CONN: ${{ secrets.QA_DB_CONNECTION_STRING }}
 
-      - name: Update dev manifests and push
-        shell: bash
-        env:
-          TAG: ${{ github.ref_name }}
-        # Rolling N-slot deploy: pick the next backend slot from backend-next.txt,
-        # update its image tag and apiPath, bump frontend/scheduler tags, then
-        # advance the slot counter (wraps 5 -> 1) and push the manifest changes
-        # to main so Flux reconciles the cluster.
-        run: |
-          set -euo pipefail
-          slot=$(cat releases/dev/backend-next.txt)
-          yq -i '.spec.values.image.tag = strenv(TAG)' releases/dev/frontend.yaml
-          yq -i '.spec.values.image.tag = strenv(TAG) | .spec.values.apiPath = strenv(TAG)' "releases/dev/backend-v${slot}.yaml"
-          yq -i '.spec.values.image.tag = strenv(TAG)' releases/dev/scheduler.yaml
-          next=$(( slot % 5 + 1 ))
-          echo "$next" > releases/dev/backend-next.txt
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add releases/dev/
-          git commit -m "deploy(dev): update frontend, backend-v${slot}, scheduler to ${TAG}"
-          git push origin main
+  deploy-qa:
+    needs: db-plan-qa
+    uses: ./.github/workflows/_env-deploy.yaml
+    with:
+      env: qa
+    secrets:
+      DB_CONN: ${{ secrets.QA_DB_CONNECTION_STRING }}
+
+  db-plan-uat:
+    needs: deploy-qa
+    uses: ./.github/workflows/_db-plan.yaml
+    with:
+      env: uat
+    secrets:
+      DB_CONN: ${{ secrets.UAT_DB_CONNECTION_STRING }}
+
+  deploy-uat:
+    needs: db-plan-uat
+    uses: ./.github/workflows/_env-deploy.yaml
+    with:
+      env: uat
+    secrets:
+      DB_CONN: ${{ secrets.UAT_DB_CONNECTION_STRING }}
+
+  db-plan-prod:
+    needs: deploy-uat
+    uses: ./.github/workflows/_db-plan.yaml
+    with:
+      env: prod
+    secrets:
+      DB_CONN: ${{ secrets.PROD_DB_CONNECTION_STRING }}
+
+  deploy-prod:
+    needs: db-plan-prod
+    uses: ./.github/workflows/_env-deploy.yaml
+    with:
+      env: prod
+    secrets:
+      DB_CONN: ${{ secrets.PROD_DB_CONNECTION_STRING }}
