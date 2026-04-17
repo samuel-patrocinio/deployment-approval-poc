@@ -110,6 +110,80 @@ jobs:
           build-args: |
             API_URL=http://backend-${{ steps.slug.outputs.slug }}/api
 
+  db-plan-dev:
+    name: Generate DB plan for dev
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout to tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.ref_name }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install sqlpackage
+        run: dotnet tool install --global Microsoft.SqlPackage
+
+      # TODO(db): uncomment once src/db/<project>.sqlproj exists AND the
+      # DEV_DB_CONNECTION_STRING repo secret is set.
+      #
+      # - name: Build DACPAC
+      #   working-directory: src/db
+      #   run: dotnet build -c Release
+      #
+      # - name: Generate DeployReport (XML)
+      #   env:
+      #     CONN: ${{ secrets.DEV_DB_CONNECTION_STRING }}
+      #   run: |
+      #     sqlpackage /Action:DeployReport \
+      #       /SourceFile:src/db/bin/Release/*.dacpac \
+      #       /TargetConnectionString:"$CONN" \
+      #       /OutputPath:deployment-report.xml \
+      #       /p:IgnorePermissions=True /p:IgnoreRoleMembership=True
+      #
+      # - name: Generate Deploy Script (SQL)
+      #   env:
+      #     CONN: ${{ secrets.DEV_DB_CONNECTION_STRING }}
+      #   run: |
+      #     sqlpackage /Action:Script \
+      #       /SourceFile:src/db/bin/Release/*.dacpac \
+      #       /TargetConnectionString:"$CONN" \
+      #       /OutputPath:deployment-script.sql \
+      #       /p:IgnorePermissions=True /p:IgnoreRoleMembership=True
+      #
+      # - name: Render plan in Job Summary
+      #   run: |
+      #     {
+      #       echo '## Database deployment plan — dev'
+      #       echo ''
+      #       echo '<details><summary>XML DeployReport</summary>'
+      #       echo ''
+      #       echo '```xml'
+      #       cat deployment-report.xml
+      #       echo '```'
+      #       echo '</details>'
+      #       echo ''
+      #       echo '<details><summary>SQL Script</summary>'
+      #       echo ''
+      #       echo '```sql'
+      #       cat deployment-script.sql
+      #       echo '```'
+      #       echo '</details>'
+      #     } >> "$GITHUB_STEP_SUMMARY"
+      #
+      # - name: Upload plan artifacts
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: db-plan-dev
+      #     path: |
+      #       deployment-report.xml
+      #       deployment-script.sql
+
+      - name: Placeholder (DB plan not yet enabled)
+        run: echo "DB plan generation is scaffolded but disabled. Uncomment the TODO block once src/db/ and DEV_DB_CONNECTION_STRING are ready."
+
   draft-release:
     name: Create draft release
     needs: [build-frontend, build-backend, build-scheduler]
@@ -136,7 +210,8 @@ jobs:
 
   deploy-dev:
     name: Deploy to Dev
-    needs: draft-release
+    needs: [draft-release, db-plan-dev]
+    environment: dev
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -145,6 +220,26 @@ jobs:
         uses: actions/checkout@v6
         with:
           ref: main
+
+      # TODO(db): uncomment alongside the db-plan-dev TODO block.
+      #
+      # - uses: actions/setup-dotnet@v4
+      #   with:
+      #     dotnet-version: '8.0.x'
+      # - name: Install sqlpackage
+      #   run: dotnet tool install --global Microsoft.SqlPackage
+      # - name: Build DACPAC
+      #   working-directory: src/db
+      #   run: dotnet build -c Release
+      # - name: Apply DB changes (sqlpackage Publish)
+      #   env:
+      #     CONN: ${{ secrets.DEV_DB_CONNECTION_STRING }}
+      #   run: |
+      #     sqlpackage /Action:Publish \
+      #       /SourceFile:src/db/bin/Release/*.dacpac \
+      #       /TargetConnectionString:"$CONN" \
+      #       /p:IgnorePermissions=True /p:IgnoreRoleMembership=True
+
       - name: Update dev manifests and push
         shell: bash
         env:
