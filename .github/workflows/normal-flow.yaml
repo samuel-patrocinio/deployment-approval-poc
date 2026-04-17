@@ -48,7 +48,7 @@ jobs:
           push: true
           tags: ${{ env.REGISTRY }}/${{ github.repository }}/frontend-${{ matrix.env }}:${{ github.ref_name }}
           build-args: |
-            API_URL=https://${{ matrix.host }}/${{ github.ref_name }}/api
+            API_URL=http://${{ matrix.host }}/${{ github.ref_name }}/api
 
   build-backend:
     name: Build backend
