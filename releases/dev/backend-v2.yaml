@@ -20,8 +20,8 @@ spec:
   values:
     image:
       repository: ghcr.io/samuel-patrocinio/deployment-approval-poc/backend
-      tag: v0.1.0
-    apiPath: "0.2"
+      tag: v0.1.1
+    apiPath: "v0.1.1"
     host: poc-dev.example.com
     ingress:
       swagger:
