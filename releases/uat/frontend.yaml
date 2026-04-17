@@ -20,5 +20,5 @@ spec:
   values:
     image:
       repository: ghcr.io/samuel-patrocinio/deployment-approval-poc/frontend-uat
-      tag: latest
+      tag: v0.1.5
     host: poc-uat.example.com
