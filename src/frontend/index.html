@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Frontend</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 3rem auto; padding: 0 1rem; }
+    button { padding: 0.5rem 1rem; font-size: 1rem; cursor: pointer; }
+    pre { background: #f4f4f4; padding: 1rem; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Frontend</h1>
+  <p>API URL: <code id="apiUrl"></code></p>
+  <button id="fetchBtn">Get API version</button>
+  <pre id="output">(click the button)</pre>
+  <script>
+    const API_URL = "__API_URL__";
+    document.getElementById("apiUrl").textContent = API_URL;
+    document.getElementById("fetchBtn").addEventListener("click", async () => {
+      const out = document.getElementById("output");
+      out.textContent = "loading…";
+      try {
+        const res = await fetch(API_URL + "/version");
+        const data = await res.json();
+        out.textContent = JSON.stringify(data, null, 2);
+      } catch (err) {
+        out.textContent = "error: " + err.message;
+      }
+    });
+  </script>
+</body>
+</html>

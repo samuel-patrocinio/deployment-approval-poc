@@ -1,24 +1,28 @@
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
-  name: frontend
+  name: backend-v4
   namespace: flux-system
 spec:
-  releaseName: frontend
+  releaseName: backend-v4
   interval: 5m
   chart:
     spec:
-      chart: ./charts/frontend
+      chart: ./charts/backend
       sourceRef:
         kind: GitRepository
         name: deployment-approval-poc
         namespace: flux-system
       interval: 5m
-  targetNamespace: poc-uat
+  targetNamespace: poc-dev
   install:
     createNamespace: true
   values:
     image:
-      repository: ghcr.io/samuel-patrocinio/frontend-uat
+      repository: ghcr.io/samuel-patrocinio/backend
       tag: latest
-    host: poc-uat.example.com
+    apiPath: "0.4"
+    host: poc-dev.example.com
+    ingress:
+      swagger:
+        enabled: true

@@ -3,4 +3,8 @@ kind: Kustomization
 resources:
   - frontend.yaml
   - backend-v1.yaml
+  - backend-v2.yaml
+  - backend-v3.yaml
+  - backend-v4.yaml
+  - backend-v5.yaml
   - scheduler.yaml
