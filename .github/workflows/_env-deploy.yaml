@@ -6,6 +6,11 @@ on:
       env:
         required: true
         type: string
+      tag:
+        description: "Tag to record in manifest updates + commit message. Defaults to github.ref_name so tag-push callers work unchanged."
+        required: false
+        type: string
+        default: ''
     secrets:
       DB_CONN:
         required: false
@@ -45,7 +50,7 @@ jobs:
       - name: Update ${{ inputs.env }} manifests and push
         shell: bash
         env:
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.tag != '' && inputs.tag || github.ref_name }}
           ENV_DIR: releases/${{ inputs.env }}
         # Rolling N-slot deploy: pick the next backend slot from
         # backend-next.txt, update its image tag and apiPath, bump

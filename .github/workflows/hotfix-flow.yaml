@@ -1,0 +1,309 @@
+name: Hotfix Flow
+run-name: Hotfix ${{ inputs.tag }} from ${{ inputs.environment }} onward
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Hotfix tag (format: vX.Y.Z-W). Must already be pushed to origin."
+        required: true
+        type: string
+      environment:
+        description: "Starting environment — deploy chain runs from here through prod."
+        required: true
+        type: choice
+        options:
+          - dev
+          - qa
+          - uat
+          - prod
+
+env:
+  REGISTRY: ghcr.io
+  DOCKER_BUILD_SUMMARY: "false"
+  DOCKER_BUILD_RECORD_UPLOAD: "false"
+
+# Shared with normal-flow so a hotfix cannot race a normal release on the
+# git push performed by _env-deploy.
+concurrency:
+  group: release-flow
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate hotfix tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify tag format
+        shell: bash
+        run: |
+          tag="${{ inputs.tag }}"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$ ]]; then
+            echo "::error::Tag '$tag' does not match vX.Y.Z-W."
+            exit 1
+          fi
+          echo "Tag '$tag' is valid."
+      - name: Verify tag exists on origin
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! gh api "repos/${{ github.repository }}/git/ref/tags/${{ inputs.tag }}" >/dev/null 2>&1; then
+            echo "::error::Tag '${{ inputs.tag }}' does not exist in origin. Push the tag first."
+            exit 1
+          fi
+
+  build-frontend:
+    needs: validate
+    name: Build frontend (${{ matrix.env }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - env: dev
+            host: poc-dev.example.com
+          - env: qa
+            host: poc-qa.example.com
+          - env: uat
+            host: poc-uat.example.com
+          - env: prod
+            host: poc-prod.example.com
+    steps:
+      - name: Checkout to hotfix tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag }}
+      - name: Log in to image registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: ./src/frontend
+          file: ./dockerfiles/frontend.Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ github.repository }}/frontend-${{ matrix.env }}:${{ inputs.tag }}
+          build-args: |
+            API_URL=http://${{ matrix.host }}/${{ inputs.tag }}/api
+
+  build-backend:
+    needs: validate
+    name: Build backend
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout to hotfix tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag }}
+      - name: Log in to image registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: ./src/backend
+          file: ./dockerfiles/backend.Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ github.repository }}/backend:${{ inputs.tag }}
+          build-args: |
+            VERSION=${{ inputs.tag }}
+
+  build-scheduler:
+    needs: validate
+    name: Build scheduler
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout to hotfix tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag }}
+      - name: Log in to image registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compute slugified tag
+        id: slug
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+        run: echo "slug=${TAG//./-}" >> "$GITHUB_OUTPUT"
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: ./src/scheduler
+          file: ./dockerfiles/scheduler.Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ github.repository }}/scheduler:${{ inputs.tag }}
+          build-args: |
+            API_URL=http://backend-${{ steps.slug.outputs.slug }}/api
+
+  draft-release:
+    name: Create draft release
+    needs: [build-frontend, build-backend, build-scheduler]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Idempotent: skip creation if the release already exists (e.g. a prior
+        # hotfix dispatch for the same tag).
+        run: |
+          if gh release view "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release ${{ inputs.tag }} already exists, skipping."
+            exit 0
+          fi
+          gh release create "${{ inputs.tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "${{ inputs.tag }}" \
+            --draft \
+            --generate-notes
+
+  # dev chain — runs only when start env is dev
+  db-plan-dev:
+    needs: draft-release
+    if: inputs.environment == 'dev'
+    uses: ./.github/workflows/_db-plan.yaml
+    with:
+      env: dev
+      ref: ${{ inputs.tag }}
+    secrets:
+      DB_CONN: ${{ secrets.DEV_DB_CONNECTION_STRING }}
+
+  deploy-dev:
+    needs: db-plan-dev
+    if: inputs.environment == 'dev'
+    uses: ./.github/workflows/_env-deploy.yaml
+    with:
+      env: dev
+      tag: ${{ inputs.tag }}
+    secrets:
+      DB_CONN: ${{ secrets.DEV_DB_CONNECTION_STRING }}
+
+  # qa chain — runs when start env is dev or qa.
+  #
+  # `needs:` vs `if:` interaction (applies to qa / uat / prod chains below):
+  #
+  # `needs: <prev-env-deploy>` enforces serial ordering so this env's
+  # approval gate can't appear before the previous env has actually
+  # deployed. GitHub evaluates `needs` first — a job only starts after
+  # every listed predecessor reaches a terminal state.
+  #
+  # By default, if any predecessor is skipped (because its own `if` was
+  # false, e.g. the user picked a later start env), downstream jobs are
+  # also skipped. The `!cancelled() && !failure()` prefix overrides that:
+  #   - `!cancelled()` keeps the job from running on workflow cancel
+  #   - `!failure()`   still skips this job if any ancestor actually failed
+  #   - `skipped` predecessors are treated as "not a failure", so the
+  #     chain continues past them when the start env is later.
+  #
+  # The trailing `contains(...)` narrows which start-env inputs activate
+  # this env's chain.
+  db-plan-qa:
+    needs: deploy-dev
+    if: |
+      !cancelled() && !failure() &&
+      contains(fromJSON('["dev","qa"]'), inputs.environment)
+    uses: ./.github/workflows/_db-plan.yaml
+    with:
+      env: qa
+      ref: ${{ inputs.tag }}
+    secrets:
+      DB_CONN: ${{ secrets.QA_DB_CONNECTION_STRING }}
+
+  deploy-qa:
+    needs: db-plan-qa
+    if: |
+      !cancelled() && !failure() &&
+      contains(fromJSON('["dev","qa"]'), inputs.environment)
+    uses: ./.github/workflows/_env-deploy.yaml
+    with:
+      env: qa
+      tag: ${{ inputs.tag }}
+    secrets:
+      DB_CONN: ${{ secrets.QA_DB_CONNECTION_STRING }}
+
+  # uat chain — runs when start env is dev, qa, or uat
+  db-plan-uat:
+    needs: deploy-qa
+    if: |
+      !cancelled() && !failure() &&
+      contains(fromJSON('["dev","qa","uat"]'), inputs.environment)
+    uses: ./.github/workflows/_db-plan.yaml
+    with:
+      env: uat
+      ref: ${{ inputs.tag }}
+    secrets:
+      DB_CONN: ${{ secrets.UAT_DB_CONNECTION_STRING }}
+
+  deploy-uat:
+    needs: db-plan-uat
+    if: |
+      !cancelled() && !failure() &&
+      contains(fromJSON('["dev","qa","uat"]'), inputs.environment)
+    uses: ./.github/workflows/_env-deploy.yaml
+    with:
+      env: uat
+      tag: ${{ inputs.tag }}
+    secrets:
+      DB_CONN: ${{ secrets.UAT_DB_CONNECTION_STRING }}
+
+  # prod chain — always runs (every start env eventually reaches prod)
+  db-plan-prod:
+    needs: [deploy-uat, draft-release]
+    if: |
+      !cancelled() && !failure()
+    uses: ./.github/workflows/_db-plan.yaml
+    with:
+      env: prod
+      ref: ${{ inputs.tag }}
+    secrets:
+      DB_CONN: ${{ secrets.PROD_DB_CONNECTION_STRING }}
+
+  deploy-prod:
+    needs: db-plan-prod
+    if: |
+      !cancelled() && !failure()
+    uses: ./.github/workflows/_env-deploy.yaml
+    with:
+      env: prod
+      tag: ${{ inputs.tag }}
+    secrets:
+      DB_CONN: ${{ secrets.PROD_DB_CONNECTION_STRING }}
+
+  publish-release:
+    name: Publish release
+    needs: deploy-prod
+    if: |
+      !cancelled() && !failure()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Flip draft release to published
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release edit "${{ inputs.tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft=false

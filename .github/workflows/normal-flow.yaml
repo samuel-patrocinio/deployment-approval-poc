@@ -10,10 +10,10 @@ env:
   # .dockerbuild artifact for each image (6 of them in this workflow).
   DOCKER_BUILD_SUMMARY: "false"
   DOCKER_BUILD_RECORD_UPLOAD: "false"
-# Serialize workflow runs so the deploy-dev commit+push can't race against
-# another run's deploy-dev for the same branch.
+# Serialize release runs (normal + hotfix) so their deploy jobs can't race
+# each other on `git push origin main`.
 concurrency:
-  group: normal-flow
+  group: release-flow
   cancel-in-progress: false
 jobs:
   build-frontend:

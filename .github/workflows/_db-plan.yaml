@@ -6,6 +6,11 @@ on:
       env:
         required: true
         type: string
+      ref:
+        description: "Git ref to check out for the plan source. Defaults to github.ref_name so tag-push callers work unchanged."
+        required: false
+        type: string
+        default: ''
     secrets:
       DB_CONN:
         required: false
@@ -18,7 +23,7 @@ jobs:
       - name: Checkout to tag
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref_name }}
 
       - uses: actions/setup-dotnet@v5
         with:
