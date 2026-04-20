@@ -200,3 +200,21 @@ jobs:
       env: prod
     secrets:
       DB_CONN: ${{ secrets.PROD_DB_CONNECTION_STRING }}
+
+  publish-release:
+    name: Publish release
+    needs: deploy-prod
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Flip draft release to published
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # `gh release edit --draft=false` is a no-op if the release is already
+        # published, so re-runs of the workflow don't fail here.
+        run: |
+          gh release edit "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft=false
