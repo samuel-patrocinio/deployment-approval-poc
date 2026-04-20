@@ -26,13 +26,13 @@ jobs:
       matrix:
         include:
           - env: dev
-            host: poc-dev.example.com
+            host: ${{ vars.HOST_DEV }}
           - env: qa
-            host: poc-qa.example.com
+            host: ${{ vars.HOST_QA }}
           - env: uat
-            host: poc-uat.example.com
+            host: ${{ vars.HOST_UAT }}
           - env: prod
-            host: poc-prod.example.com
+            host: ${{ vars.HOST_PROD }}
     steps:
       - name: Checkout to tag
         uses: actions/checkout@v6
